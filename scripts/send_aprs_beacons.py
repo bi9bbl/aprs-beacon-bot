@@ -70,7 +70,7 @@ class Station:
         if self.phg:
             extension = f"PHG{self.phg}"
         elif self.rng:
-            extension = f"RNG{self.rng}"
+            extension = f"RNG{rng}"
         elif self.course is not None or self.speed is not None:
             course = self.course if self.course is not None else 0
             speed = self.speed if self.speed is not None else 0
@@ -131,10 +131,6 @@ def load_stations() -> list[Station]:
         comment = str(item.get("comment", "")).strip()
         if any(c in comment for c in ("|", "~")):
             raise ConfigError(f"Station {index} comment must not contain '|' or '~' (reserved by APRS)")
-        
-        # ###########################################################
-        # 这里已删除 ASCII 检查，现在支持中文 ✅
-        # ###########################################################
 
         destination = str(item.get("destination", default_destination)).strip() or default_destination
         path = str(item.get("path", default_path)).strip() or default_path
@@ -280,7 +276,7 @@ def format_latitude(latitude: float) -> str:
     return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
 
 
-def format_longitude(longitude: float) str:
+def format_longitude(longitude: float) -> str:
     hemisphere = "E" if longitude >= 0 else "W"
     absolute = abs(longitude)
     degrees = int(absolute)
@@ -297,9 +293,6 @@ def send_station(station: Station, global_server: str, global_port: int, version
         connection.settimeout(SOCKET_TIMEOUT_SECONDS)
         connection.sendall(login_line.encode("utf-8"))
         packet = station.packet(station.source)
-        # ###########################################################
-        # 这里改为 latin-1 编码，完美支持中文 ✅
-        # ###########################################################
         connection.sendall(f"{packet}\n".encode("latin-1", errors="replace"))
         print(f"Sent station '{station.name}' as {station.source}: {packet}")
 

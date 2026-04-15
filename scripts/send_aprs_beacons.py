@@ -2,9 +2,13 @@
 """
 APRS-IS Beacon Sender - GitHub Actions.
 
-Coordinates may be provided as either:
-- APRS-style degree-minute strings: DDMM.MMMMN / DDDMM.MMMME
-- WGS-84 decimal degrees, which are converted internally
+Coordinates in configuration must use WGS-84 degree-minute strings:
+- Latitude: DDMM.MMMMN / DDMM.MMMMS
+- Longitude: DDDMM.MMMME / DDDMM.MMMMW
+
+They are converted internally to APRS fixed-width position fields:
+- Latitude: DDMM.HHN / DDMM.HHS
+- Longitude: DDDMM.HHE / DDDMM.HHW
 """
 
 import argparse
@@ -125,6 +129,10 @@ def load_stations() -> list[Station]:
             raise ConfigError(f"Station {index} enabled must be true or false")
 
         comment = str(item.get("comment", "")).strip()
+        if any(c in comment for c in ("|", "~")):
+            raise ConfigError(f"Station {index} comment must not contain '|' or '~' (reserved by APRS)")
+        if comment and not all(0x20 <= ord(c) <= 0x7E for c in comment):
+            raise ConfigError(f"Station {index} comment must contain only printable ASCII characters")
         destination = str(item.get("destination", default_destination)).strip() or default_destination
         path = str(item.get("path", default_path)).strip() or default_path
         symbol_table = str(item.get("symbol_table", DEFAULT_SYMBOL_TABLE))
@@ -220,30 +228,23 @@ def validate_coordinates(latitude: float, longitude: float, station_index: int) 
 
 
 def normalize_latitude(value: Any) -> str:
-    if isinstance(value, (int, float)):
-        latitude = float(value)
-        validate_coordinates(latitude, 0.0, 0)
-        return format_latitude(latitude)
     if isinstance(value, str):
         return validate_coordinate_string(value, is_latitude=True)
-    raise ConfigError("latitude must be numeric or match DDMM.MMMMN/S")
+    raise ConfigError("latitude must match DDMM.MMMMN/S (e.g. 3412.9800N)")
 
 
 def normalize_longitude(value: Any) -> str:
-    if isinstance(value, (int, float)):
-        longitude = float(value)
-        validate_coordinates(0.0, longitude, 0)
-        return format_longitude(longitude)
     if isinstance(value, str):
         return validate_coordinate_string(value, is_latitude=False)
-    raise ConfigError("longitude must be numeric or match DDDMM.MMMME/W")
+    raise ConfigError("longitude must match DDDMM.MMMME/W (e.g. 10853.6100E)")
 
 
 def validate_coordinate_string(value: str, is_latitude: bool) -> str:
     normalized = value.strip().upper()
+    # Input must be DDMM.MMMM[D] / DDDMM.MMMM[D]; output is normalized to APRS fixed-width format.
     pattern = r"^\d{4}\.\d{4}[NS]$" if is_latitude else r"^\d{5}\.\d{4}[EW]$"
     coordinate_name = "latitude" if is_latitude else "longitude"
-    expected = "DDMM.MMMMN/S" if is_latitude else "DDDMM.MMMME/W"
+    expected = "DDMM.MMMMN/S (e.g. 3412.9800N)" if is_latitude else "DDDMM.MMMME/W (e.g. 10853.6100E)"
 
     if not re.fullmatch(pattern, normalized):
         raise ConfigError(f"{coordinate_name} must match {expected}")
@@ -251,6 +252,7 @@ def validate_coordinate_string(value: str, is_latitude: bool) -> str:
     degree_digits = 2 if is_latitude else 3
     degrees = int(normalized[:degree_digits])
     minutes = float(normalized[degree_digits:-1])
+    hemisphere = normalized[-1]
 
     if minutes >= 60:
         raise ConfigError(f"{coordinate_name} minutes must be less than 60")
@@ -263,7 +265,10 @@ def validate_coordinate_string(value: str, is_latitude: bool) -> str:
     if not is_latitude and degrees == 180 and minutes != 0:
         raise ConfigError("longitude 180 degrees must have 00.0000 minutes")
 
-    return normalized
+    # Normalize to APRS-spec fixed-width format: DDMM.HHN (8 chars) / DDDMM.HHE (9 chars).
+    if is_latitude:
+        return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
+    return f"{degrees:03d}{minutes:05.2f}{hemisphere}"
 
 
 def format_latitude(latitude: float) -> str:
@@ -271,7 +276,7 @@ def format_latitude(latitude: float) -> str:
     absolute = abs(latitude)
     degrees = int(absolute)
     minutes = (absolute - degrees) * 60
-    return f"{degrees:02d}{minutes:07.4f}{hemisphere}"
+    return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
 
 
 def format_longitude(longitude: float) -> str:
@@ -279,7 +284,7 @@ def format_longitude(longitude: float) -> str:
     absolute = abs(longitude)
     degrees = int(absolute)
     minutes = (absolute - degrees) * 60
-    return f"{degrees:03d}{minutes:07.4f}{hemisphere}"
+    return f"{degrees:03d}{minutes:05.2f}{hemisphere}"
 
 
 def send_station(station: Station, global_server: str, global_port: int, version: str) -> None:

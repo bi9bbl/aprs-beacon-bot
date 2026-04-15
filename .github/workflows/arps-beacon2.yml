@@ -1,0 +1,42 @@
+name: APRS Beacon
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *'
+
+# 全局环境变量：强制所有 Action 使用 Node.js 24 ✅ 消除弃用警告
+env:
+  ACTIONS_ALLOW_USE_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  send-beacons:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          check-latest: true
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Send APRS Beacons
+        env:
+          APRS_SERVER: ${{ vars.APRS_SERVER }}
+          APRS_PORT: ${{ vars.APRS_PORT }}
+          APRS_LOGIN_VERSION: ${{ vars.APRS_LOGIN_VERSION }}
+          APRS_DEFAULT_DESTINATION: ${{ vars.APRS_DEFAULT_DESTINATION }}
+          APRS_DEFAULT_PATH: ${{ vars.APRS_DEFAULT_PATH }}
+          APRS_CALLSIGNS_JSON: ${{ vars.APRS_CALLSIGNS_JSON }}
+        run: python scripts/send_aprs_beacons.py

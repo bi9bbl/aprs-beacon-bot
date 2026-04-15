@@ -77,8 +77,7 @@ class Station:
 
 def utf8_to_latin1(s: str) -> str:
     """
-    【核心】UTF-8 中文 → Latin-1 透明传输，让 aprs.fi 正确显示
-    这是 APRS 中文唯一标准方案
+    【核心】UTF-8 中文 → Latin-1 透明传输，让 aprs.fi 正确显示中文
     """
     return s.encode("utf-8").decode("latin-1")
 
@@ -98,8 +97,8 @@ def load_stations() -> list[Station]:
     if not isinstance(stations_data, list):
         raise ConfigError("APRS_CALLSIGNS_JSON must be array")
 
-    default_dest = os.getenv("APRS_DEFAULT_DESTINATION", DEFAULT_DESTINATION)
-    default_path = os.getenv("APRS_DEFAULT_PATH", DEFAULT_PATH)
+    default_dest = os.getenv("APRS_DEFAULT_DESTINATION", DEFAULT_DESTINATION).strip() or DEFAULT_DESTINATION
+    default_path = os.getenv("APRS_DEFAULT_PATH", DEFAULT_PATH).strip() or DEFAULT_PATH
     stations = []
 
     for idx, item in enumerate(stations_data):
@@ -110,20 +109,39 @@ def load_stations() -> list[Station]:
         enabled = item.get("enabled", True)
         lat = item.get("latitude")
         lon = item.get("longitude")
-        comment = str(item.get("comment", ""))
+        comment = str(item.get("comment", "")).strip()
 
-        # ✅ 关键：中文编码转换
+        # 中文编码转换（支持 aprs.fi 显示）
         comment = utf8_to_latin1(comment)
 
         # 保留禁止字符检查
         if any(c in comment for c in ("|", "~")):
             raise ConfigError(f"Station {idx} comment 不能包含 | ~")
 
-        # 移除原来的 ASCII 检查，允许中文
         destination = item.get("destination", default_dest)
         path = item.get("path", default_path)
         sym_table = item.get("symbol_table", "/")
         sym_code = item.get("symbol_code", ">")
+
+        # 经纬度格式校验（保持原版逻辑）
+        def validate_coordinate_string(value: str, is_latitude: bool) -> str:
+            normalized = value.strip().upper()
+            pattern = r"^\d{4}\.\d{4}[NS]$" if is_latitude else r"^\d{5}\.\d{4}[EW]$"
+            if not re.fullmatch(pattern, normalized):
+                raise ConfigError(f"坐标格式错误: {value}")
+            degree_digits = 2 if is_latitude else 3
+            degrees = int(normalized[:degree_digits])
+            minutes = float(normalized[degree_digits:-1])
+            hemisphere = normalized[-1]
+            if is_latitude:
+                return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
+            return f"{degrees:03d}{minutes:05.2f}{hemisphere}"
+
+        try:
+            lat_val = validate_coordinate_string(lat, is_latitude=True)
+            lon_val = validate_coordinate_string(lon, is_latitude=False)
+        except Exception as e:
+            raise ConfigError(f"Station {idx} 坐标错误: {e}")
 
         station = Station(
             name=name,
@@ -131,8 +149,8 @@ def load_stations() -> list[Station]:
             ssid=ssid,
             passcode=passcode,
             enabled=enabled,
-            latitude=lat,
-            longitude=lon,
+            latitude=lat_val,
+            longitude=lon_val,
             comment=comment,
             destination=destination,
             path=path,
@@ -142,9 +160,6 @@ def load_stations() -> list[Station]:
         stations.append(station)
     return stations
 
-def normalize_latitude(v: Any) -> str: return str(v)
-def normalize_longitude(v: Any) -> str: return str(v)
-
 def send_station(station: Station, server: str, port: int, version: str) -> None:
     srv = station.server or server
     prt = station.port or port
@@ -153,18 +168,29 @@ def send_station(station: Station, server: str, port: int, version: str) -> None
     with socket.create_connection((srv, prt), timeout=15) as conn:
         conn.sendall(login.encode("latin-1"))
         packet = station.packet(station.source)
-        # ✅ 发送必须用 latin-1
         conn.sendall(f"{packet}\n".encode("latin-1"))
         print(f"✅ 发送成功: {station.source} | {packet}")
 
 def main():
-    stations = load_stations()
-    server = os.getenv("APRS_SERVER", DEFAULT_SERVER)
-    port = int(os.getenv("APRS_PORT", DEFAULT_PORT))
-    version = os.getenv("APRS_LOGIN_VERSION", "aprs-bot/1.0")
+    try:
+        stations = load_stations()
+    except ConfigError as e:
+        print(f"配置错误: {e}", file=sys.stderr)
+        return 1
+
+    # 🔥 修复空端口报错（自动使用默认值）
+    port_str = os.getenv("APRS_PORT", "").strip()
+    port = int(port_str) if port_str else DEFAULT_PORT
+
+    server = os.getenv("APRS_SERVER", DEFAULT_SERVER).strip() or DEFAULT_SERVER
+    version = os.getenv("APRS_LOGIN_VERSION", "aprs-bot/1.0").strip() or "aprs-bot/1.0"
 
     for st in [s for s in stations if s.enabled]:
-        send_station(st, server, port, version)
+        try:
+            send_station(st, server, port, version)
+        except Exception as e:
+            print(f"发送失败 {st.source}: {e}", file=sys.stderr)
+            return 1
     return 0
 
 if __name__ == "__main__":

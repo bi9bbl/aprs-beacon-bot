@@ -55,7 +55,7 @@ Each object in the `APRS_CALLSIGNS_JSON` array represents one station.
 |---|---|---|---|
 | `name` | string | `station-{index}` | Human-readable label used in logs |
 | `enabled` | bool | `true` | Set to `false` to keep the config but skip sending |
-| `comment` | string | `""` | Free-text comment appended to the packet,Support Chinese display |
+| `comment` | string | `""` | Free-text comment appended to the packet,Support CHS display |
 | `destination` | string | `APRS` (or `APRS_DEFAULT_DESTINATION`) | APRS destination field |
 | `path` | string | `TCPIP*` (or `APRS_DEFAULT_PATH`) | Digipeater path |
 | `symbol_table` | string | `"/"` | APRS symbol table identifier (single character) |

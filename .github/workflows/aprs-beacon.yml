@@ -3,7 +3,8 @@ name: APRS Beacon
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'
+    # Avoid the top of the hour, where GitHub may delay or drop scheduled jobs.
+    - cron: '17 */3 * * *'
 
 env:
   ACTIONS_ALLOW_USE_NODE24: true

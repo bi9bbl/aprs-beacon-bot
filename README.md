@@ -17,7 +17,7 @@ This repository uses GitHub Actions to send scheduled APRS-IS position beacons.
 
 1. Fork or clone this repository.
 2. Go to **Settings -> Secrets and variables -> Actions -> Variables** and create `APRS_CALLSIGNS_JSON` with your station array.
-3. The workflow runs automatically every hour. You can also trigger it manually from the **Actions** tab.
+3. The workflow runs automatically every 3 hours. You can also trigger it manually from the **Actions** tab.
 
 ## Repository Variables
 
@@ -194,7 +194,9 @@ example: 34 deg 12.98 min N = 34 + 12.98/60 = 34.21633
 
 ## Workflow Schedule
 
-The workflow runs every hour and also supports manual dispatch.
+The workflow runs every 3 hours at minute 17 (UTC) and also supports manual dispatch.
+
+The schedule intentionally avoids the top of the hour because GitHub may delay or drop scheduled jobs during high-load periods around `:00`.
 
 To change the schedule, edit `.github/workflows/aprs-beacon.yml`.
 
@@ -209,9 +211,29 @@ python3 scripts/send_aprs_beacons.py --validate-only
 
 Output shows total stations, enabled stations, and rendered APRS packets for enabled entries.
 
-## Contributor
-<table>
-  <tr>
-    <td><a href="https://github.com/mixkover119"><img src="https://avatars.githubusercontent.com/u/68005040?v=4" width="100"><br>@BI9CXC</a></td>
-  </tr>
-</table>
+## Contributors
+
+This section updates automatically from the repository's GitHub contributors graph.
+
+<p align="center">
+  <a href="https://github.com/bi9bbl/aprs-beacon-bot/graphs/contributors">
+    <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/bi9bbl/aprs-beacon-bot?style=for-the-badge">
+  </a>
+  <a href="https://github.com/bi9bbl/aprs-beacon-bot/pulls">
+    <img alt="Pull requests welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/bi9bbl/aprs-beacon-bot/graphs/contributors">
+    <img alt="Repository contributors" src="https://contrib.rocks/image?repo=bi9bbl/aprs-beacon-bot" />
+  </a>
+</p>
+
+<p align="center">
+  Thanks to everyone who has contributed to this project.
+</p>
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

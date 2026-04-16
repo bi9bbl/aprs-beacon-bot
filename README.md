@@ -208,4 +208,4 @@ python3 scripts/send_aprs_beacons.py --validate-only
 Output shows total stations, enabled stations, and rendered APRS packets for enabled entries.
 
 ## Contributor
-BI9CXC
+- [@mixkover119](sslocal://flow/file_open?url=https%3A%2F%2Fgithub.com%2F%E7%94%A8%E6%88%B7%E5%90%8D1&flow_extra=eyJsaW5rX3R5cGUiOiJjb2RlX2ludGVycHJldGVyIn0=) (code)

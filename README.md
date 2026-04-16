@@ -206,3 +206,6 @@ python3 scripts/send_aprs_beacons.py --validate-only
 ```
 
 Output shows total stations, enabled stations, and rendered APRS packets for enabled entries.
+
+## Contributor
+BI9CXC

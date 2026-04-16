@@ -210,6 +210,6 @@ Output shows total stations, enabled stations, and rendered APRS packets for ena
 ## Contributor
 <table>
   <tr>
-    <td><a href="https://github.com/mixkover119"><img src="https://avatars.githubusercontent.com/u/68005040?v=4" width="100"><br>@xxx</a></td>
+    <td><a href="https://github.com/mixkover119"><img src="https://avatars.githubusercontent.com/u/68005040?v=4" width="100"><br>@BI9CXC</a></td>
   </tr>
 </table>

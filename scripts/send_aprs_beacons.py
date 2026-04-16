@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
 APRS-IS Beacon Sender - GitHub Actions.
-支持 主表 / 次级表 0-9 A-Z + 中文评论正常显示
+
+Coordinates in configuration must use WGS-84 degree-minute strings:
+- Latitude: DDMM.MMMMN / DDMM.MMMMS
+- Longitude: DDDMM.MMMME / DDDMM.MMMMW
+
+They are converted internally to APRS fixed-width position fields:
+- Latitude: DDMM.HHN / DDMM.HHS
+- Longitude: DDDMM.HHE / DDDMM.HHW
 """
 
 import argparse
@@ -21,8 +28,10 @@ DEFAULT_SYMBOL_TABLE = "/"
 DEFAULT_SYMBOL_CODE = ">"
 SOCKET_TIMEOUT_SECONDS = 15
 
+
 class ConfigError(Exception):
     pass
+
 
 @dataclass(frozen=True)
 class Station:
@@ -54,7 +63,7 @@ class Station:
             return self.callsign.strip().upper()
         return f"{self.callsign.strip().upper()}-{ssid}"
 
-    def packet(self, source: str) -> str:
+    def packet(self, source: str, for_wire: bool = False) -> str:
         dti = "=" if self.messaging_capable else "!"
 
         extension = ""
@@ -63,8 +72,8 @@ class Station:
         elif self.rng:
             extension = f"RNG{self.rng}"
         elif self.course is not None or self.speed is not None:
-            course = self.course or 0
-            speed = self.speed or 0
+            course = self.course if self.course is not None else 0
+            speed = self.speed if self.speed is not None else 0
             extension = f"{course:03d}/{speed:03d}"
 
         altitude_str = ""
@@ -72,12 +81,14 @@ class Station:
             feet = round(self.altitude * 3.28084)
             altitude_str = f"/A={feet:06d}"
 
-        # ✅ 这里完全支持 主表 / 次表 0-9 A-Z
-        info_field = f"{dti}{self.latitude}{self.symbol_table}{self.longitude}{self.symbol_code}{extension}{altitude_str}{self.comment}"
+        comment = encode_comment_for_wire(self.comment) if for_wire else self.comment
+        info_field = f"{dti}{self.latitude}{self.symbol_table}{self.longitude}{self.symbol_code}{extension}{altitude_str}{comment}"
         return f"{source}>{self.destination},{self.path}:{info_field}"
 
-def utf8_to_latin1(s: str) -> str:
-    return s.encode("utf-8").decode("latin-1")
+
+def encode_comment_for_wire(comment: str) -> str:
+    return comment.encode("utf-8").decode("latin-1")
+
 
 def load_json_env(name: str, required: bool = True) -> Any:
     raw = os.getenv(name, "").strip()
@@ -85,115 +96,241 @@ def load_json_env(name: str, required: bool = True) -> Any:
         if required:
             raise ConfigError(f"Missing environment variable: {name}")
         return None
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ConfigError(f"{name} invalid JSON: {exc}") from exc
+        raise ConfigError(f"{name} must be valid JSON: {exc}") from exc
+
 
 def load_stations() -> list[Station]:
     stations_data = load_json_env("APRS_CALLSIGNS_JSON")
     if not isinstance(stations_data, list):
-        raise ConfigError("APRS_CALLSIGNS_JSON must be array")
+        raise ConfigError("APRS_CALLSIGNS_JSON must be a JSON array")
 
-    default_dest = os.getenv("APRS_DEFAULT_DESTINATION", DEFAULT_DESTINATION).strip() or DEFAULT_DESTINATION
+    default_destination = os.getenv("APRS_DEFAULT_DESTINATION", DEFAULT_DESTINATION).strip() or DEFAULT_DESTINATION
     default_path = os.getenv("APRS_DEFAULT_PATH", DEFAULT_PATH).strip() or DEFAULT_PATH
-    stations = []
 
-    for idx, item in enumerate(stations_data):
-        name = str(item.get("name", f"st{idx}"))
+    stations: list[Station] = []
+    for index, item in enumerate(stations_data):
+        if not isinstance(item, dict):
+            raise ConfigError(f"Station {index} must be a JSON object")
+
+        name = str(item.get("name", f"station-{index}")).strip() or f"station-{index}"
         callsign = item.get("callsign")
         ssid = item.get("ssid", "")
         passcode = item.get("passcode")
         enabled = item.get("enabled", True)
-        lat = item.get("latitude")
-        lon = item.get("longitude")
+        latitude = item.get("latitude")
+        longitude = item.get("longitude")
+
+        if not isinstance(callsign, str) or not callsign.strip():
+            raise ConfigError(f"Station {index} has an invalid callsign")
+        if not isinstance(ssid, str):
+            raise ConfigError(f"Station {index} has an invalid SSID")
+        if not isinstance(passcode, str) or not passcode.strip():
+            raise ConfigError(f"Station {index} has an invalid passcode")
+        if not isinstance(enabled, bool):
+            raise ConfigError(f"Station {index} enabled must be true or false")
+
         comment = str(item.get("comment", "")).strip()
+        if any(c in comment for c in ("|", "~", "\r", "\n")):
+            raise ConfigError(f"Station {index} comment must not contain '|', '~', or line breaks")
 
-        comment = utf8_to_latin1(comment)
-
-        if any(c in comment for c in ("|", "~")):
-            raise ConfigError(f"Station {idx} comment cannot contain | ~")
-
-        # ✅ 放开限制：现在支持 主表 / 次表 0-9 A-Z
+        destination = str(item.get("destination", default_destination)).strip() or default_destination
+        path = str(item.get("path", default_path)).strip() or default_path
         symbol_table = str(item.get("symbol_table", DEFAULT_SYMBOL_TABLE))
         symbol_code = str(item.get("symbol_code", DEFAULT_SYMBOL_CODE))
 
-        destination = item.get("destination", default_dest)
-        path = item.get("path", default_path)
+        if len(symbol_table) != 1 or len(symbol_code) != 1:
+            raise ConfigError(f"Station {index} symbol_table and symbol_code must be single characters")
 
-        def validate_coordinate_string(value: str, is_latitude: bool) -> str:
-            normalized = value.strip().upper()
-            pattern = r"^\d{4}\.\d{4}[NS]$" if is_latitude else r"^\d{5}\.\d{4}[EW]$"
-            if not re.fullmatch(pattern, normalized):
-                raise ConfigError(f"Invalid coordinate: {value}")
-            degree_digits = 2 if is_latitude else 3
-            degrees = int(normalized[:degree_digits])
-            minutes = float(normalized[degree_digits:-1])
-            hemisphere = normalized[-1]
-            if minutes >= 60:
-                raise ConfigError("Minutes >= 60")
-            if is_latitude and degrees > 90:
-                raise ConfigError("Latitude > 90")
-            if not is_latitude and degrees > 180:
-                raise ConfigError("Longitude > 180")
-            if is_latitude:
-                return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
-            return f"{degrees:03d}{minutes:05.2f}{hemisphere}"
+        messaging_capable = item.get("messaging_capable", False)
+        if not isinstance(messaging_capable, bool):
+            raise ConfigError(f"Station {index} messaging_capable must be true or false")
+
+        course_raw = item.get("course")
+        if course_raw is not None:
+            if not isinstance(course_raw, int) or not 0 <= course_raw <= 360:
+                raise ConfigError(f"Station {index} course must be an integer 0-360")
+        course = course_raw
+
+        speed_raw = item.get("speed")
+        if speed_raw is not None:
+            if not isinstance(speed_raw, int) or not 0 <= speed_raw <= 999:
+                raise ConfigError(f"Station {index} speed must be an integer 0-999")
+        speed = speed_raw
+
+        altitude_raw = item.get("altitude")
+        if altitude_raw is not None and not isinstance(altitude_raw, (int, float)):
+            raise ConfigError(f"Station {index} altitude must be a number (meters)")
+        altitude = float(altitude_raw) if altitude_raw is not None else None
+
+        phg = str(item.get("phg", "")).strip()
+        if phg and not re.fullmatch(r"\d{4}", phg):
+            raise ConfigError(f"Station {index} phg must be 4 digits (e.g. '5132')")
+
+        rng = str(item.get("rng", "")).strip()
+        if rng and not re.fullmatch(r"\d{4}", rng):
+            raise ConfigError(f"Station {index} rng must be 4 digits (e.g. '0050')")
+
+        if phg and rng:
+            raise ConfigError(f"Station {index} phg and rng cannot both be set")
+        if (phg or rng) and (course is not None or speed is not None):
+            raise ConfigError(f"Station {index} phg/rng and course/speed cannot both be set")
+
+        station_server = str(item.get("server", "")).strip()
+        station_port_raw = item.get("port")
+        station_port: int | None = None
+        if station_port_raw is not None:
+            if not isinstance(station_port_raw, int) or not 1 <= station_port_raw <= 65535:
+                raise ConfigError(f"Station {index} port must be an integer 1-65535")
+            station_port = station_port_raw
 
         try:
-            lat_val = validate_coordinate_string(lat, is_latitude=True)
-            lon_val = validate_coordinate_string(lon, is_latitude=False)
-        except Exception as e:
-            raise ConfigError(f"Station {idx} coordinate error: {e}")
+            latitude_value = normalize_latitude(latitude)
+            longitude_value = normalize_longitude(longitude)
+        except ConfigError as exc:
+            raise ConfigError(f"Station {index} {exc}") from exc
 
-        station = Station(
-            name=name,
-            callsign=callsign,
-            ssid=ssid,
-            passcode=passcode,
-            enabled=enabled,
-            latitude=lat_val,
-            longitude=lon_val,
-            comment=comment,
-            destination=destination,
-            path=path,
-            symbol_table=symbol_table,
-            symbol_code=symbol_code
+        stations.append(
+            Station(
+                name=name,
+                callsign=callsign,
+                ssid=ssid,
+                passcode=passcode,
+                enabled=enabled,
+                latitude=latitude_value,
+                longitude=longitude_value,
+                comment=comment,
+                destination=destination,
+                path=path,
+                symbol_table=symbol_table,
+                symbol_code=symbol_code,
+                messaging_capable=messaging_capable,
+                course=course,
+                speed=speed,
+                altitude=altitude,
+                phg=phg,
+                rng=rng,
+                server=station_server,
+                port=station_port,
+            )
         )
-        stations.append(station)
+
+    if not stations:
+        raise ConfigError("At least one station must be configured in APRS_CALLSIGNS_JSON")
+
     return stations
 
-def send_station(station: Station, server: str, port: int, version: str) -> None:
-    srv = station.server or server
-    prt = station.port or port
-    login = f"user {station.source} pass {station.passcode} vers {version}\n"
 
-    with socket.create_connection((srv, prt), timeout=15) as conn:
-        conn.sendall(login.encode("latin-1"))
-        packet = station.packet(station.source)
-        conn.sendall(f"{packet}\n".encode("latin-1"))
-        print(f"✅ Sent: {station.source} | {packet}")
+def normalize_latitude(value: Any) -> str:
+    if isinstance(value, str):
+        return validate_coordinate_string(value, is_latitude=True)
+    raise ConfigError("latitude must match DDMM.MMMMN/S (e.g. 3412.9800N)")
 
-def main():
+
+def normalize_longitude(value: Any) -> str:
+    if isinstance(value, str):
+        return validate_coordinate_string(value, is_latitude=False)
+    raise ConfigError("longitude must match DDDMM.MMMME/W (e.g. 10853.6100E)")
+
+
+def validate_coordinate_string(value: str, is_latitude: bool) -> str:
+    normalized = value.strip().upper()
+    pattern = r"^\d{4}\.\d{4}[NS]$" if is_latitude else r"^\d{5}\.\d{4}[EW]$"
+    coordinate_name = "latitude" if is_latitude else "longitude"
+    expected = "DDMM.MMMMN/S (e.g. 3412.9800N)" if is_latitude else "DDDMM.MMMME/W (e.g. 10853.6100E)"
+
+    if not re.fullmatch(pattern, normalized):
+        raise ConfigError(f"{coordinate_name} must match {expected}")
+
+    degree_digits = 2 if is_latitude else 3
+    degrees = int(normalized[:degree_digits])
+    minutes = float(normalized[degree_digits:-1])
+    hemisphere = normalized[-1]
+
+    if minutes >= 60:
+        raise ConfigError(f"{coordinate_name} minutes must be less than 60")
+    if is_latitude and degrees > 90:
+        raise ConfigError(f"latitude degrees out of range: {degrees}")
+    if not is_latitude and degrees > 180:
+        raise ConfigError(f"longitude degrees out of range: {degrees}")
+    if is_latitude and degrees == 90 and minutes != 0:
+        raise ConfigError("latitude 90 degrees must have 00.0000 minutes")
+    if not is_latitude and degrees == 180 and minutes != 0:
+        raise ConfigError("longitude 180 degrees must have 00.0000 minutes")
+
+    if is_latitude:
+        return f"{degrees:02d}{minutes:05.2f}{hemisphere}"
+    return f"{degrees:03d}{minutes:05.2f}{hemisphere}"
+
+
+def send_station(station: Station, global_server: str, global_port: int, version: str) -> None:
+    server = station.server or global_server
+    port = station.port if station.port is not None else global_port
+    login_line = f"user {station.source} pass {station.passcode} vers {version}\n"
+
+    with socket.create_connection((server, port), timeout=SOCKET_TIMEOUT_SECONDS) as connection:
+        connection.settimeout(SOCKET_TIMEOUT_SECONDS)
+        connection.sendall(login_line.encode("utf-8"))
+        packet = station.packet(station.source, for_wire=True)
+        connection.sendall(f"{packet}\n".encode("latin-1"))
+        print(f"Sent station '{station.name}' as {station.source}: {station.packet(station.source)}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Send APRS-IS beacons from GitHub Actions")
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate environment variables and render packets without sending them",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
     try:
         stations = load_stations()
-    except ConfigError as e:
-        print(f"Config error: {e}", file=sys.stderr)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
 
-    port_str = os.getenv("APRS_PORT", "").strip()
-    port = int(port_str) if port_str else DEFAULT_PORT
+    active_stations = [station for station in stations if station.enabled]
 
     server = os.getenv("APRS_SERVER", DEFAULT_SERVER).strip() or DEFAULT_SERVER
-    version = os.getenv("APRS_LOGIN_VERSION", "aprs-bot/1.0").strip() or "aprs-bot/1.0"
+    version = os.getenv("APRS_LOGIN_VERSION", "aprs-beacon-bot/1.0").strip() or "aprs-beacon-bot/1.0"
 
-    for st in [s for s in stations if s.enabled]:
+    try:
+        port = int(os.getenv("APRS_PORT", str(DEFAULT_PORT)).strip() or str(DEFAULT_PORT))
+    except ValueError:
+        print("Configuration error: APRS_PORT must be an integer", file=sys.stderr)
+        return 1
+
+    if args.validate_only:
+        print(f"Validated {len(stations)} station(s), {len(active_stations)} enabled.")
+        for station in active_stations:
+            print(f"{station.source}: {station.packet(station.source)}")
+        return 0
+
+    if not active_stations:
+        print("No enabled stations configured. Nothing to send.")
+        return 0
+
+    for station in active_stations:
+        effective_server = station.server or server
+        effective_port = station.port if station.port is not None else port
+        print(f"Connecting to {effective_server}:{effective_port} for {station.source}")
         try:
-            send_station(st, server, port, version)
-        except Exception as e:
-            print(f"Failed {st.source}: {e}", file=sys.stderr)
+            send_station(station, server, port, version)
+        except OSError as exc:
+            print(f"Network error while sending as {station.source}: {exc}", file=sys.stderr)
             return 1
+
     return 0
 
+
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

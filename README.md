@@ -7,6 +7,7 @@ This repository uses GitHub Actions to send scheduled APRS-IS position beacons.
 - Scheduled beacon transmission with GitHub Actions
 - Multiple callsigns, multiple SSIDs, and multiple positions
 - Per-station enable/disable, APRS extensions, and server/port overrides
+- Fixed APRS TOCALL/device ID set in code to `AP9BBL`
 - Station configuration stored in a single GitHub Repository Variable
 - WGS-84 coordinate input in `ddmm.mmmm` format
 - Internal APRS-compatible coordinate conversion before send
@@ -34,12 +35,13 @@ This repository uses GitHub Actions to send scheduled APRS-IS position beacons.
 | `APRS_SERVER` | `rotate.aprs2.net` | Global APRS-IS server address |
 | `APRS_PORT` | `14580` | Global APRS-IS port |
 | `APRS_LOGIN_VERSION` | `aprs-beacon-bot/1.0` | Client version string sent on login |
-| `APRS_DEFAULT_DESTINATION` | `APRS` | Default destination field for all stations |
 | `APRS_DEFAULT_PATH` | `TCPIP*` | Default digipeater path for all stations |
 
 ## Station Fields
 
 Each object in the `APRS_CALLSIGNS_JSON` array represents one station.
+
+The APRS destination callsign (TOCALL/device ID) is fixed in code to `AP9BBL` and is not configurable from repository variables or station JSON.
 
 ### Required fields
 
@@ -58,7 +60,6 @@ Each object in the `APRS_CALLSIGNS_JSON` array represents one station.
 | `name` | string | `station-{index}` | Human-readable label used in logs |
 | `enabled` | bool | `true` | Set to `false` to keep the config but skip sending |
 | `comment` | string | `""` | Free-text comment appended to the packet; UTF-8 beacon text is supported |
-| `destination` | string | `APRS` (or `APRS_DEFAULT_DESTINATION`) | APRS destination field |
 | `path` | string | `TCPIP*` (or `APRS_DEFAULT_PATH`) | Digipeater path |
 | `symbol_table` | string | `"/"` | APRS symbol table identifier (single character) |
 | `symbol_code` | string | `">"` | APRS symbol code (single character) |

@@ -22,7 +22,7 @@ from typing import Any
 
 DEFAULT_SERVER = "rotate.aprs2.net"
 DEFAULT_PORT = 14580
-DEFAULT_DESTINATION = "APRS"
+TOCALL = "AP9BBL"
 DEFAULT_PATH = "TCPIP*"
 DEFAULT_SYMBOL_TABLE = "/"
 DEFAULT_SYMBOL_CODE = ">"
@@ -43,7 +43,6 @@ class Station:
     latitude: str
     longitude: str
     comment: str
-    destination: str
     path: str
     symbol_table: str
     symbol_code: str
@@ -83,7 +82,7 @@ class Station:
 
         comment = encode_comment_for_wire(self.comment) if for_wire else self.comment
         info_field = f"{dti}{self.latitude}{self.symbol_table}{self.longitude}{self.symbol_code}{extension}{altitude_str}{comment}"
-        return f"{source}>{self.destination},{self.path}:{info_field}"
+        return f"{source}>{TOCALL},{self.path}:{info_field}"
 
 
 def encode_comment_for_wire(comment: str) -> str:
@@ -108,7 +107,6 @@ def load_stations() -> list[Station]:
     if not isinstance(stations_data, list):
         raise ConfigError("APRS_CALLSIGNS_JSON must be a JSON array")
 
-    default_destination = os.getenv("APRS_DEFAULT_DESTINATION", DEFAULT_DESTINATION).strip() or DEFAULT_DESTINATION
     default_path = os.getenv("APRS_DEFAULT_PATH", DEFAULT_PATH).strip() or DEFAULT_PATH
 
     stations: list[Station] = []
@@ -137,7 +135,6 @@ def load_stations() -> list[Station]:
         if any(c in comment for c in ("|", "~", "\r", "\n")):
             raise ConfigError(f"Station {index} comment must not contain '|', '~', or line breaks")
 
-        destination = str(item.get("destination", default_destination)).strip() or default_destination
         path = str(item.get("path", default_path)).strip() or default_path
         symbol_table = str(item.get("symbol_table", DEFAULT_SYMBOL_TABLE))
         symbol_code = str(item.get("symbol_code", DEFAULT_SYMBOL_CODE))
@@ -203,7 +200,6 @@ def load_stations() -> list[Station]:
                 latitude=latitude_value,
                 longitude=longitude_value,
                 comment=comment,
-                destination=destination,
                 path=path,
                 symbol_table=symbol_table,
                 symbol_code=symbol_code,

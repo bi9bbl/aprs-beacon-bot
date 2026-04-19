@@ -36,7 +36,6 @@ jobs:
           APRS_SERVER: ${{ vars.APRS_SERVER }}
           APRS_PORT: ${{ vars.APRS_PORT }}
           APRS_LOGIN_VERSION: ${{ vars.APRS_LOGIN_VERSION }}
-          APRS_DEFAULT_DESTINATION: ${{ vars.APRS_DEFAULT_DESTINATION }}
           APRS_DEFAULT_PATH: ${{ vars.APRS_DEFAULT_PATH }}
           APRS_CALLSIGNS_JSON: ${{ vars.APRS_CALLSIGNS_JSON }}
         run: python scripts/send_aprs_beacons.py
